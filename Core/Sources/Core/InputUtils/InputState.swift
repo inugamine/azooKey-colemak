@@ -98,7 +98,7 @@ public enum InputState: Sendable, Hashable {
                 }
             case .startUnicodeInput:
                 return (.enterUnicodeInputMode, .transition(.unicodeInput("")))
-            case .unknown, .navigation, .backspace, .enter, .escape, .function, .editSegment, .tab, .forget, .transformSelectedText:
+            case .unknown, .navigation, .backspace, .enter, .escape, .function, .editSegment, .tab, .forget, .transformSelectedText, .かなダブルタップ, .英数ダブルタップ:
                 return (.fallthrough, .fallthrough)
             }
         case .attachDiacritic(let diacritic):
@@ -118,6 +118,8 @@ public enum InputState: Sendable, Hashable {
                 return (.stopComposition, .transition(.none))
             case .かな:
                 return (.selectInputLanguage(.japanese), .transition(.none))
+            case .かなダブルタップ, .英数ダブルタップ:
+                return (.fallthrough, .fallthrough)
             case .function:
                 return (.consume, .fallthrough)
             case .enter:
@@ -164,10 +166,12 @@ public enum InputState: Sendable, Hashable {
                 case .ten:
                     return (.submitHalfWidthRomanCandidate, .transition(.none))
                 }
-            case .かな, .forget, .tab:
+            case .かな, .かなダブルタップ, .forget, .tab:
                 return (.consume, .fallthrough)
             case .英数:
                 return (.commitMarkedTextAndSelectInputLanguage(.english), .transition(.none))
+            case .英数ダブルタップ:
+                return (.submitHalfWidthRomanCandidate, .transition(.none))
             case .navigation(let direction):
                 if direction == .down {
                     return (.enterCandidateSelectionMode, .transition(.selecting))
@@ -223,10 +227,12 @@ public enum InputState: Sendable, Hashable {
                 case .ten:
                     return (.submitHalfWidthRomanCandidate, .transition(.none))
                 }
-            case .かな, .forget, .tab:
+            case .かな, .かなダブルタップ, .forget, .tab:
                 return (.consume, .fallthrough)
             case .英数:
                 return (.commitMarkedTextAndSelectInputLanguage(.english), .transition(.none))
+            case .英数ダブルタップ:
+                return (.submitHalfWidthRomanCandidate, .transition(.none))
             case .navigation(let direction):
                 if direction == .down {
                     return (.enterCandidateSelectionMode, .transition(.selecting))
@@ -316,10 +322,12 @@ public enum InputState: Sendable, Hashable {
                 return (.editSegment(count), .transition(.selecting))
             case .forget:
                 return (.forgetMemory, .fallthrough)
-            case .かな, .tab:
+            case .かな, .かなダブルタップ, .tab:
                 return (.consume, .fallthrough)
             case .英数:
                 return (.commitMarkedTextAndSelectInputLanguage(.english), .transition(.none))
+            case .英数ダブルタップ:
+                return (.submitHalfWidthRomanCandidate, .transition(.none))
             case .startUnicodeInput:
                 return (.submitSelectedCandidateAndEnterUnicodeInputMode, .transition(.unicodeInput("")))
             case .unknown, .suggest, .transformSelectedText, .deadKey:
@@ -348,7 +356,7 @@ public enum InputState: Sendable, Hashable {
                 return (.hideReplaceSuggestionWindow, .transition(.composing))
             case .英数:
                 return (.submitReplaceSuggestionCandidate, .transition(.none))
-            case .かな, .forget, .tab:
+            case .かな, .かなダブルタップ, .英数ダブルタップ, .forget, .tab:
                 return (.consume, .fallthrough)
             case .startUnicodeInput:
                 return (.hideReplaceSuggestionWindow, .transition(.unicodeInput("")))
@@ -385,7 +393,7 @@ public enum InputState: Sendable, Hashable {
                 }
             case .escape:
                 return (.cancelUnicodeInput, .transition(.none))
-            case .かな, .英数, .tab, .forget, .function, .navigation, .editSegment, .suggest, .transformSelectedText, .deadKey, .startUnicodeInput, .unknown:
+            case .かな, .かなダブルタップ, .英数, .英数ダブルタップ, .tab, .forget, .function, .navigation, .editSegment, .suggest, .transformSelectedText, .deadKey, .startUnicodeInput, .unknown:
                 return (.consume, .fallthrough)
             }
         }

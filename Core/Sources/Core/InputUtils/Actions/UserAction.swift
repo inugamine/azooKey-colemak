@@ -8,7 +8,9 @@ public enum UserAction {
     case tab
     case unknown
     case 英数
+    case 英数ダブルタップ
     case かな
+    case かなダブルタップ
     case navigation(NavigationDirection)
     case function(Function)
     case number(Number)

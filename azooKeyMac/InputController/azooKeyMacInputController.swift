@@ -8,6 +8,14 @@ class azooKeyMacInputController: IMKInputController { // swiftlint:disable:this 
     var segmentsManager: SegmentsManager
     private var inputState: InputState = .none
     private var inputLanguage: InputLanguage = .japanese
+    
+    // 英数キーのダブルタップ検出用
+    private var pendingEisuuEvent: (event: NSEvent, client: IMKTextInput)?
+    private var eisuuTimer: Timer?
+    private let doubleTapThreshold: TimeInterval = 0.38
+    
+    // かなキーのダブルタップ検出用
+    private var lastKanaKeyTime: Date?
     var liveConversionEnabled: Bool {
         Config.LiveConversion().value
     }
@@ -126,18 +134,50 @@ class azooKeyMacInputController: IMKInputController { // swiftlint:disable:this 
         if let value = value as? NSString {
             self.client()?.overrideKeyboard(withKeyboardNamed: Config.KeyboardLayout().value.layoutIdentifier)
             let englishMode = value == "com.apple.inputmethod.Roman"
-            // 英数/かなの対応するキーが推された場合と同等のイベントを発生させる
-            let userAction: UserAction? = if englishMode, self.inputLanguage != .english {
-                .英数
-            } else if !englishMode, self.inputLanguage == .english {
-                .かな
-            } else {
-                nil
+            
+            // 英数キーのダブルタップ検出
+            if englishMode && self.inputLanguage != .english {
+                if pendingEisuuEvent != nil {
+                    // 2回目 → ダブルタップ確定
+                    eisuuTimer?.invalidate()
+                    eisuuTimer = nil
+                    pendingEisuuEvent = nil
+                    
+                    // ローマ字変換して確定
+                    let (clientAction, clientActionCallback) = self.inputState.event(
+                        eventCore: .init(modifierFlags: []),
+                        userAction: .英数ダブルタップ,
+                        inputLanguage: self.inputLanguage,
+                        liveConversionEnabled: false,
+                        enableDebugWindow: false,
+                        enableSuggestion: false
+                    )
+                    _ = self.handleClientAction(
+                        clientAction,
+                        clientActionCallback: clientActionCallback,
+                        client: self.client()
+                    )
+                    // 入力言語を英語に切り替え
+                    self.inputLanguage = .english
+                    super.setValue(value, forTag: tag, client: sender)
+                    return
+                } else {
+                    // 1回目 → 保留してタイマー設定
+                    pendingEisuuEvent = (NSEvent(), self.client()!)  // ダミー
+                    eisuuTimer = Timer.scheduledTimer(withTimeInterval: doubleTapThreshold, repeats: false) { [weak self] _ in
+                        Task { @MainActor in
+                            self?.processPendingEisuuFromSetValue(value: value, tag: tag, sender: sender)
+                        }
+                    }
+                    return  // 一旦何もしない
+                }
             }
-            if let userAction {
+            
+            // かなキーの処理（ダブルタップなし）
+            if !englishMode && self.inputLanguage == .english {
                 let (clientAction, clientActionCallback) = self.inputState.event(
                     eventCore: .init(modifierFlags: []),
-                    userAction: userAction,
+                    userAction: .かな,
                     inputLanguage: self.inputLanguage,
                     liveConversionEnabled: false,
                     enableDebugWindow: false,
@@ -173,7 +213,41 @@ class azooKeyMacInputController: IMKInputController { // swiftlint:disable:this 
             return false
         }
 
-        let userAction = UserAction.getUserAction(event: event, inputLanguage: inputLanguage)
+        var userAction = UserAction.getUserAction(event: event, inputLanguage: inputLanguage)
+
+        // 英数キーのダブルタップ検出
+        if case .英数 = userAction {
+            if pendingEisuuEvent != nil {
+                // 2回目が来た → ダブルタップ確定
+                eisuuTimer?.invalidate()
+                eisuuTimer = nil
+                pendingEisuuEvent = nil
+                userAction = .英数ダブルタップ
+            } else {
+                // 1回目 → 保留してタイマー設定
+                pendingEisuuEvent = (event, client)
+                eisuuTimer = Timer.scheduledTimer(withTimeInterval: doubleTapThreshold, repeats: false) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.processPendingEisuu()
+                    }
+                }
+                return true  // イベント消費、まだ処理しない
+            }
+        }
+
+        // かなキーのダブルタップ検出
+        if case .かな = userAction {
+            let now = Date()
+            if let last = lastKanaKeyTime, now.timeIntervalSince(last) < doubleTapThreshold {
+                userAction = .かなダブルタップ
+                lastKanaKeyTime = nil
+            } else {
+                lastKanaKeyTime = now
+            }
+        }
+
+
+
 
         // Check if AI backend is enabled
         let aiBackendEnabled = Config.AIBackendPreference().value != .off
@@ -695,6 +769,53 @@ extension azooKeyMacInputController {
         } else {
             self.segmentsManager.appendDebugMessage("再試行上限に達しました。")
             retryCount = 0
+        }
+    }
+
+    // MARK: - 英数キーダブルタップの保留処理
+    @MainActor
+    private func processPendingEisuu() {
+        guard let pending = pendingEisuuEvent else { return }
+        pendingEisuuEvent = nil
+        eisuuTimer = nil
+        
+        // シングルタップとして処理
+        let (clientAction, clientActionCallback) = inputState.event(
+            pending.event,
+            userAction: .英数,
+            inputLanguage: self.inputLanguage,
+            liveConversionEnabled: Config.LiveConversion().value,
+            enableDebugWindow: Config.DebugWindow().value,
+            enableSuggestion: Config.AIBackendPreference().value != .off
+        )
+        _ = handleClientAction(clientAction, clientActionCallback: clientActionCallback, client: pending.client)
+    }
+
+    // MARK: - setValue用の英数キーダブルタップ保留処理
+    @MainActor
+    private func processPendingEisuuFromSetValue(value: Any!, tag: Int, sender: Any!) {
+        pendingEisuuEvent = nil
+        eisuuTimer = nil
+        
+        // シングルタップとして処理（通常の英数キー動作）
+        let (clientAction, clientActionCallback) = self.inputState.event(
+            eventCore: .init(modifierFlags: []),
+            userAction: .英数,
+            inputLanguage: self.inputLanguage,
+            liveConversionEnabled: false,
+            enableDebugWindow: false,
+            enableSuggestion: false
+        )
+        _ = self.handleClientAction(
+            clientAction,
+            clientActionCallback: clientActionCallback,
+            client: self.client()
+        )
+        self.inputLanguage = .english
+        
+        // 元の setValue の処理を完了させる
+        if let value = value as? NSString {
+            self.client()?.selectMode(value as String)
         }
     }
 
